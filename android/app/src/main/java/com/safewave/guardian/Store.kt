@@ -145,14 +145,14 @@ object Store {
             else {
                 Auth.token(ctx)
                 val body = Db.get(ctx, "/users/$uid")
-                var j = if (body.trim() == "null") null else JSONObject(body)
-                if (j == null) {
+                val found: JSONObject? = if (body.trim() == "null") null else JSONObject(body)
+                val j: JSONObject = found ?: run {
                     val email = Auth.email(ctx)
                     val name = joinName?.takeIf { it.isNotBlank() } ?: p.name ?: email.substringBefore('@')
                     val nj = JSONObject().put("name", name).put("email", email).put("role", "pending")
                         .put("at", JSONObject().put(".sv", "timestamp"))
                     Db.put(ctx, "/users/$uid", nj.toString())
-                    j = nj
+                    nj
                 }
                 val m = Me(j.optString("name"), j.optString("email"), j.optString("role"))
                 me.value = m
