@@ -48,7 +48,7 @@ class AlarmActivity : ComponentActivity() {
             SafeTheme(font) {
                 Box(Modifier.fillMaxSize().systemBarsPadding()) {
                     EmergencyScreen(
-                        profile.name, test && !live.alarming, busy, profile.contacts.firstOrNull { it.phone.isNotBlank() },
+                        profile.displayName, test && !live.alarming, busy, profile.contacts.firstOrNull { it.phone.isNotBlank() },
                         onAck = {
                             scope.launch {
                                 busy = true

@@ -26,11 +26,24 @@ data class Live(
 
 data class Contact(val name: String, val rel: String, val phone: String)
 
+/** 함께 사는 분 (같은 센서를 씀) */
+data class Person(
+    val name: String = "", val age: String = "", val sex: String = "여", val blood: String = "",
+    val cond: String = "", val meds: String = "", val mob: String = "", val note: String = ""
+)
+
 data class Profile(
     val name: String = "어르신", val age: String = "", val sex: String = "", val blood: String = "",
     val addr: String = "", val cond: String = "", val meds: String = "", val mob: String = "", val note: String = "",
-    val contacts: List<Contact> = emptyList(), val loaded: Boolean = false
-)
+    val contacts: List<Contact> = emptyList(), val loaded: Boolean = false,
+    val people: List<Person> = emptyList()
+) {
+    /** 경보·상태에 쓰는 이름: 한 분이면 "김영순", 두 분이면 "김영순·박철수", 더 많으면 "김영순 외 2명" */
+    val displayName: String get() {
+        val names = listOf(name) + people.map { it.name }.filter { it.isNotBlank() }
+        return when (names.size) { 1 -> names[0]; 2 -> names.joinToString("·"); else -> "${names[0]} 외 ${names.size - 1}명" }
+    }
+}
 
 data class Me(val name: String, val email: String, val role: String) {
     /** 관제 사이트와 같이 관리자만 어르신 정보·연락처를 고칠 수 있음 */
@@ -188,9 +201,23 @@ object Store {
         runCatching {
             val body = Db.get(ctx, "/shared/${Prefs(ctx).node}")
             if (body.trim() == "null") return@runCatching
-            val pj = JSONObject(body).optJSONObject("profile") ?: return@runCatching
-            profile.value = parseProfile(pj)
+            val doc = JSONObject(body)
+            val people = parsePeople(doc.opt("people"))
+            val pj = doc.optJSONObject("profile")
+            profile.value = (if (pj != null) parseProfile(pj) else profile.value).copy(people = people)
         }
+    }
+
+    private fun parsePeople(v: Any?): List<Person> {
+        val arr = when (v) {
+            is JSONArray -> (0 until v.length()).mapNotNull { v.optJSONObject(it) }
+            is JSONObject -> v.keys().asSequence().mapNotNull { v.optJSONObject(it) }.toList()   // 배열이 객체로 올 때
+            else -> emptyList()
+        }
+        return arr.map { o ->
+            fun s(k: String) = o.opt(k)?.takeIf { it != JSONObject.NULL }?.toString()?.trim().orEmpty()
+            Person(s("name"), s("age"), s("sex").ifEmpty { "여" }, s("blood"), s("cond"), s("meds"), s("mob"), s("note"))
+        }.filter { it.name.isNotEmpty() }
     }
 
     private fun parseProfile(j: JSONObject): Profile {
@@ -227,8 +254,34 @@ object Store {
             val whoJson: Any = if (who.isEmpty()) JSONObject.NULL else who
             val body = JSONObject().put("profile", pj).put("by", whoJson).put("at", JSONObject().put(".sv", "timestamp"))
             Db.patch(ctx, "/shared/$nodeId", body.toString())
-            profile.value = np.copy(loaded = true)
+            profile.value = np.copy(loaded = true, people = profile.value.people)
             val log = JSONObject().put("msg", "$what 저장 (앱)" + if (who.isNotEmpty()) " · $who" else "")
+                .put("cls", "sys").put("by", whoJson).put("ts", JSONObject().put(".sv", "timestamp"))
+            runCatching { Db.post(ctx, "/logs/$nodeId", log.toString()) }
+            null
+        } catch (e: AuthException) {
+            "수정할 권한이 없어요. 관리자 계정으로 로그인해 주세요."
+        } catch (e: Exception) {
+            "저장하지 못했어요. 인터넷을 확인하고 다시 해 주세요."
+        }
+    }
+
+    /** 함께 사는 분 목록 저장 (shared/<노드>/people). 사이트가 profile 을 저장해도 지워지지 않게 따로 둠 */
+    suspend fun savePeople(ctx: Context, list: List<Person>, what: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val nodeId = Prefs(ctx).node
+            val arr = JSONArray()
+            list.forEach {
+                arr.put(JSONObject().put("name", it.name).put("age", it.age.toIntOrNull() ?: it.age).put("sex", it.sex)
+                    .put("blood", it.blood).put("cond", it.cond).put("meds", it.meds).put("mob", it.mob).put("note", it.note))
+            }
+            val who = me.value?.name.orEmpty()
+            val whoJson: Any = if (who.isEmpty()) JSONObject.NULL else who
+            val body = JSONObject().put("people", if (list.isEmpty()) JSONObject.NULL else arr)
+                .put("by", whoJson).put("at", JSONObject().put(".sv", "timestamp"))
+            Db.patch(ctx, "/shared/$nodeId", body.toString())
+            profile.value = profile.value.copy(people = list)
+            val log = JSONObject().put("msg", "$what (앱)" + if (who.isNotEmpty()) " · $who" else "")
                 .put("cls", "sys").put("by", whoJson).put("ts", JSONObject().put(".sv", "timestamp"))
             runCatching { Db.post(ctx, "/logs/$nodeId", log.toString()) }
             null

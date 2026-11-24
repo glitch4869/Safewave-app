@@ -150,7 +150,7 @@ class WatchService : Service() {
     }
 
     // ---------------- 상태 처리 ----------------
-    private fun name() = Store.profile.value.name
+    private fun name() = Store.profile.value.displayName
 
     private fun onState(l: Live, test: Boolean, silenced: Boolean) {
         val nm = getSystemService(NotificationManager::class.java)
@@ -169,6 +169,7 @@ class WatchService : Service() {
                     Store.silenced.value = false
                     nm.notify(N_ALERT, alarmNotification(test))
                     val words = if (test) "시험 경보입니다. 실제 상황이 아닙니다."
+                                else if (Store.profile.value.people.isNotEmpty()) "긴급 상황입니다. ${name()} 님 댁에서 낙상이 감지되었습니다. 확인해 주세요."
                                 else "긴급 상황입니다. ${name()} 님이 넘어지셨습니다. 확인해 주세요."
                     speak(words)
                     startAlarm(if (Prefs(this).voice) 6_000L else 3_000L)
@@ -178,7 +179,8 @@ class WatchService : Service() {
                 "grace" -> {
                     stopAlarm()
                     nm.notify(N_ALERT, graceNotification(l))
-                    speak("${name()} 님이 넘어지신 것 같습니다. 지금 확인하고 있습니다.")
+                    speak(if (Store.profile.value.people.isNotEmpty()) "${name()} 님 댁에서 낙상이 의심됩니다. 지금 확인하고 있습니다."
+                          else "${name()} 님이 넘어지신 것 같습니다. 지금 확인하고 있습니다.")
                 }
                 else -> {
                     stopAlarm()
@@ -256,7 +258,8 @@ class WatchService : Service() {
         return NotificationCompat.Builder(this, CH_ALARM)
             .setSmallIcon(R.drawable.ic_notify)
             .setColor(Color.parseColor("#B91C1C"))
-            .setContentTitle(if (test) "시험 경보 (실제 상황 아님)" else "긴급! ${name()} 님이 넘어지셨어요")
+            .setContentTitle(if (test) "시험 경보 (실제 상황 아님)"
+                else if (Store.profile.value.people.isNotEmpty()) "긴급! ${name()} 님 댁 낙상 감지" else "긴급! ${name()} 님이 넘어지셨어요")
             .setContentText("눌러서 확인해 주세요")
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)

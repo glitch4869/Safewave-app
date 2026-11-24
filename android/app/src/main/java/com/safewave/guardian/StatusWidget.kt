@@ -52,8 +52,8 @@ object StatusWidget {
         val l = Store.live.value
         val p = Store.profile.value
         val loggedIn = Auth.hasSaved(ctx)
-        val k = look(l, p.name)
-        val key = "$loggedIn|${l.status}|${l.acking}|${l.graceLeft}|${p.name}|${l.lastSeen / 60000}"
+        val k = look(l, p.displayName)
+        val key = "$loggedIn|${l.status}|${l.acking}|${l.graceLeft}|${p.displayName}|${l.lastSeen / 60000}"
         if (!force && key == lastKey) return
         lastKey = key
 
@@ -67,7 +67,7 @@ object StatusWidget {
             else -> R.drawable.wbg_off
         }
         v.setInt(R.id.w_root, "setBackgroundResource", bg)
-        v.setTextViewText(R.id.w_name, if (loggedIn) "${p.name} 님" else "SafeWave")
+        v.setTextViewText(R.id.w_name, if (loggedIn) "${p.displayName} 님" else "SafeWave")
         v.setTextViewText(R.id.w_title, if (loggedIn) k.title else "로그인이 필요해요")
         v.setTextViewText(R.id.w_sub, if (loggedIn) k.sub else "앱을 열어 로그인해 주세요")
         val alarming = loggedIn && l.alarming

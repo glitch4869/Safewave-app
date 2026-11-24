@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.safewave.guardian.Contact
 import com.safewave.guardian.Live
+import com.safewave.guardian.Person
 import com.safewave.guardian.Me
 import com.safewave.guardian.Profile
 import com.safewave.guardian.Rec
@@ -73,10 +74,12 @@ import java.util.Date
 import java.util.Locale
 
 // ---------------- 공통 ----------------
+/** 함께 사는 분이 있으면 센서가 누가 넘어졌는지 모르므로 "댁에서" 로 표현 */
+fun multi() = com.safewave.guardian.Store.profile.value.people.isNotEmpty()
 data class Look(val color: Color, val icon: ImageVector, val title: String, val sub: String)
 
 fun look(l: Live, name: String): Look = when (l.status) {
-    Status.NORMAL -> Look(C.ok, Icons.Default.CheckCircle, "안전해요", "$name 님이 집에서 잘 지내고 계세요")
+    Status.NORMAL -> Look(C.ok, Icons.Default.CheckCircle, "안전해요", if (multi()) "$name 님 댁에 이상이 없어요" else "$name 님이 집에서 잘 지내고 계세요")
     Status.EMPTY -> Look(C.empty, Icons.Default.Home, "집에 안 계세요", "감지 구역에 사람이 없어요")
     Status.GRACE ->
         if (l.acking) Look(C.warn, Icons.Default.Check, "확인을 보냈어요", "센서가 정상으로 바뀌기를 기다리고 있어요")
@@ -84,6 +87,7 @@ fun look(l: Live, name: String): Look = when (l.status) {
             "반응을 확인하고 있어요" + (l.graceLeft?.let { " · ${it}초 남음" } ?: ""))
     Status.EMERGENCY ->
         if (l.acking) Look(C.warn, Icons.Default.Check, "확인을 보냈어요", "센서가 정상으로 바뀌기를 기다리고 있어요")
+        else if (multi()) Look(C.crit, Icons.Default.Warning, "긴급! 낙상 감지", "$name 님 댁에서 넘어진 뒤 움직임이 없어요. 지금 확인해 주세요")
         else Look(C.crit, Icons.Default.Warning, "긴급! 넘어지셨어요", "$name 님이 움직이지 않으세요. 지금 확인해 주세요")
     Status.OFFLINE -> Look(C.off, Icons.Default.Info, "센서와 연결이 끊겼어요", "센서 전원과 와이파이를 확인해 주세요")
     Status.LOADING -> Look(C.off, Icons.Default.Refresh, "확인하는 중이에요", "센서 상태를 불러오고 있어요")
@@ -216,8 +220,8 @@ fun HomeScreen(
     onAck: () -> Unit, onCall: (Contact) -> Unit, on119: () -> Unit, onInfo: () -> Unit, onRecords: () -> Unit
 ) {
     Page {
-        Text("${p.name} 님", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
-        StatusCard(l, p.name, onAck, ackBusy)
+        Text("${p.displayName} 님", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
+        StatusCard(l, p.displayName, onAck, ackBusy)
         if (ackMsg.isNotEmpty()) Body(ackMsg, color = if (ackMsg.startsWith("확인")) C.ok else C.crit)
         val first = p.contacts.firstOrNull { it.phone.isNotBlank() }
         if (first != null) BigButton("${first.rel.ifEmpty { first.name }}에게 전화", { onCall(first) }, color = C.ok, icon = Icons.Default.Phone)
@@ -350,37 +354,141 @@ fun RecordsScreen(recs: List<Rec>, onRefresh: () -> Unit) {
 }
 
 // ---------------- 어르신 정보 ----------------
+const val MAX_PEOPLE = 3   // 대표 어르신 외에 함께 사는 분
+
 @Composable
-fun InfoScreen(p: Profile, canEdit: Boolean, onBack: () -> Unit, onSave: (Profile, (String?) -> Unit) -> Unit) {
-    var editing by remember { mutableStateOf(false) }
+fun InfoScreen(
+    p: Profile, canEdit: Boolean, onBack: () -> Unit,
+    onSave: (Profile, (String?) -> Unit) -> Unit,
+    onSavePeople: (List<Person>, String, (String?) -> Unit) -> Unit
+) {
+    var editing by remember { mutableStateOf(-3) }     // -3 없음, -2 대표 어르신, -1 새로 추가, 0.. 함께 사는 분 번호
+    var confirmDel by remember { mutableStateOf(-1) }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
-    if (editing) {
-        ProfileForm(p, busy, msg,
-            onSave = { np ->
-                busy = true; msg = ""
-                onSave(np) { err -> busy = false; if (err == null) { editing = false; msg = "저장했어요. 관제 사이트에도 반영돼요." } else msg = err }
-            },
-            onCancel = { editing = false; msg = "" })
-        return
+    var msgOk by remember { mutableStateOf(true) }
+    val done: (String?, String) -> Unit = { err, ok ->
+        busy = false
+        if (err == null) { editing = -3; confirmDel = -1; msg = ok; msgOk = true } else { msg = err; msgOk = false }
     }
+    fun savePeople(list: List<Person>, what: String, ok: String) {
+        busy = true; msg = ""
+        onSavePeople(list, what) { done(it, ok) }
+    }
+
+    when {
+        editing == -2 -> {
+            ProfileForm(p, busy, if (msgOk) "" else msg,
+                onSave = { np -> busy = true; msg = ""; onSave(np) { done(it, "저장했어요. 관제 사이트에도 반영돼요.") } },
+                onCancel = { editing = -3; msg = "" })
+            return
+        }
+        editing == -1 -> {
+            PersonForm("함께 사는 분 추가", Person(), busy, if (msgOk) "" else msg,
+                onSave = { np -> savePeople(p.people + np, "함께 사는 분 추가", "${np.name} 님을 추가했어요.") },
+                onCancel = { editing = -3; msg = "" })
+            return
+        }
+        editing >= 0 && editing < p.people.size -> {
+            val i = editing
+            PersonForm("${p.people[i].name} 님 정보 고치기", p.people[i], busy, if (msgOk) "" else msg,
+                onSave = { np -> savePeople(p.people.toMutableList().also { it[i] = np }, "함께 사는 분 정보 저장", "저장했어요.") },
+                onCancel = { editing = -3; msg = "" })
+            return
+        }
+    }
+
     Page {
         BigButton("돌아가기", onBack, outlined = true, contentColor = C.ink, icon = Icons.Default.ArrowBack)
         Title("어르신 정보")
-        if (msg.isNotEmpty()) Body(msg, color = C.ok)
+        if (msg.isNotEmpty()) Body(msg, color = if (msgOk) C.ok else C.crit)
+
+        // 대표 어르신 (관제 사이트에 나오는 분)
         Card {
+            Text(if (p.people.isEmpty()) "어르신" else "대표 어르신", fontSize = 18.sp, color = C.sub, fontWeight = FontWeight.SemiBold)
             Text(p.name, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
-            val meta = listOf(p.age.takeIf { it.isNotEmpty() }?.let { "${it}세" }, p.sex.ifEmpty { null },
-                p.blood.takeIf { it.isNotEmpty() }?.let { "혈액형 $it" }).filterNotNull().joinToString(" · ")
+            val meta = metaText(p.age, p.sex, p.blood)
             if (meta.isNotEmpty()) Body(meta, size = 22)
-        }
-        Card {
             InfoRow("주소", p.addr); InfoRow("질환", p.cond); InfoRow("복용약", p.meds)
             InfoRow("거동", p.mob); InfoRow("특이사항", p.note)
+            if (canEdit) BigButton("고치기", { editing = -2; msg = "" }, outlined = true, contentColor = C.brand, icon = Icons.Default.Edit)
         }
-        if (canEdit) BigButton("정보 고치기", { editing = true; msg = "" }, color = C.brand, icon = Icons.Default.Edit)
-        else Body("정보는 관리자 계정에서 고칠 수 있어요.", size = 18)
+
+        // 함께 사는 분
+        p.people.forEachIndexed { i, x ->
+            Card {
+                Text("함께 사는 분", fontSize = 18.sp, color = C.sub, fontWeight = FontWeight.SemiBold)
+                Text(x.name, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
+                val meta = metaText(x.age, x.sex, x.blood)
+                if (meta.isNotEmpty()) Body(meta, size = 22)
+                InfoRow("질환", x.cond); InfoRow("복용약", x.meds); InfoRow("거동", x.mob); InfoRow("특이사항", x.note)
+                if (canEdit) {
+                    if (confirmDel == i) {
+                        Body("${x.name} 님을 목록에서 지울까요?", color = C.crit, size = 21)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            BigButton(if (busy) "지우는 중..." else "지우기",
+                                { savePeople(p.people.filterIndexed { j, _ -> j != i }, "함께 사는 분 삭제", "${x.name} 님을 지웠어요.") },
+                                Modifier.weight(1f), color = C.crit, enabled = !busy)
+                            BigButton("아니요", { confirmDel = -1 }, Modifier.weight(1f), outlined = true, contentColor = C.ink)
+                        }
+                    } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        BigButton("고치기", { editing = i; confirmDel = -1; msg = "" }, Modifier.weight(1f), outlined = true,
+                            contentColor = C.brand, icon = Icons.Default.Edit)
+                        BigButton("지우기", { confirmDel = i; msg = "" }, Modifier.weight(1f), outlined = true,
+                            contentColor = C.crit, icon = Icons.Default.Delete)
+                    }
+                }
+            }
+        }
+
+        if (canEdit) {
+            if (p.people.size < MAX_PEOPLE) BigButton("함께 사는 분 추가", { editing = -1; confirmDel = -1; msg = "" },
+                color = C.brand, icon = Icons.Default.Add)
+            else Body("함께 사는 분은 ${MAX_PEOPLE}명까지 등록할 수 있어요.", size = 18)
+            Body("센서는 집 전체를 지켜봐서, 여러 분이 계시면 경보는 \"○○ 님 댁에서 낙상 감지\"로 알려 드려요.", size = 17)
+        } else Body("정보는 관리자 계정에서 고칠 수 있어요.", size = 18)
         if (!p.loaded) Body("관제 사이트에 등록된 정보가 아직 없어요.")
+    }
+}
+
+private fun metaText(age: String, sex: String, blood: String) =
+    listOf(age.takeIf { it.isNotEmpty() }?.let { "${it}세" }, sex.ifEmpty { null },
+        blood.takeIf { it.isNotEmpty() }?.let { "혈액형 $it" }).filterNotNull().joinToString(" · ")
+
+@Composable
+private fun PersonForm(title: String, init: Person, busy: Boolean, err: String, onSave: (Person) -> Unit, onCancel: () -> Unit) {
+    var name by remember { mutableStateOf(init.name) }
+    var age by remember { mutableStateOf(init.age) }
+    var sex by remember { mutableStateOf(init.sex.ifEmpty { "여" }) }
+    var blood by remember { mutableStateOf(init.blood) }
+    var cond by remember { mutableStateOf(init.cond) }
+    var meds by remember { mutableStateOf(init.meds) }
+    var mob by remember { mutableStateOf(init.mob) }
+    var note by remember { mutableStateOf(init.note) }
+    Page {
+        Title(title)
+        Card {
+            BigField("이름", name) { name = it }
+            BigField("나이", age, KeyboardType.Number) { v -> age = v.filter { it.isDigit() }.take(3) }
+            Text("성별", fontSize = 18.sp, color = C.sub, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("여", "남").forEach { s ->
+                    BigButton(s, { sex = s }, Modifier.weight(1f), outlined = sex != s, contentColor = if (sex == s) Color.White else C.brand)
+                }
+            }
+            BigField("혈액형 (예: A+)", blood) { blood = it.take(6) }
+        }
+        Card {
+            BigField("질환", cond, singleLine = false) { cond = it }
+            BigField("복용약", meds, singleLine = false) { meds = it }
+            BigField("거동 (예: 지팡이 사용)", mob, singleLine = false) { mob = it }
+            BigField("특이사항", note, singleLine = false) { note = it }
+        }
+        if (err.isNotEmpty()) Body(err, color = C.crit)
+        BigButton(if (busy) "저장하는 중..." else "저장", {
+            onSave(Person(name.trim(), age.trim(), sex, blood.trim(), cond.trim(), meds.trim(), mob.trim(), note.trim()))
+        }, color = C.ok, icon = Icons.Default.Check, enabled = !busy && name.isNotBlank())
+        BigButton("취소", onCancel, outlined = true, contentColor = C.sub, enabled = !busy)
     }
 }
 
@@ -504,7 +612,7 @@ fun EmergencyScreen(
         Icon(Icons.Default.Warning, null, tint = Color.White, modifier = Modifier.size(96.dp))
         Text(if (test) "시험 경보" else "긴급!", fontSize = 52.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
         Text(if (test) "실제 상황이 아니에요. 경보가 잘 울리는지 시험하는 중이에요."
-             else "$name 님이 넘어지셨어요.\n움직이지 않으세요.", fontSize = 28.sp, color = Color.White, lineHeight = 38.sp)
+             else if (multi()) "$name 님 댁에서\n낙상이 감지됐어요.\n움직임이 없어요." else "$name 님이 넘어지셨어요.\n움직이지 않으세요.", fontSize = 28.sp, color = Color.White, lineHeight = 38.sp)
         BigButton(if (ackBusy) "보내는 중..." else "확인했어요 (알람 끄기)", onAck, Modifier.heightIn(min = 96.dp),
             color = Color.White, contentColor = C.crit, icon = Icons.Default.Check, enabled = !ackBusy)
         if (first != null) BigButton("${first.rel.ifEmpty { first.name }}에게 전화", { onCall(first) }, color = Color(0xFF7F1D1D), icon = Icons.Default.Phone)

@@ -243,7 +243,7 @@ class MainActivity : ComponentActivity() {
         // 긴급이거나 시험 경보면 화면 전체를 경보로
         if (live.alarming || test) {
             EmergencyScreen(
-                profile.name, test && !live.alarming, ackBusy, first,
+                profile.displayName, test && !live.alarming, ackBusy, first,
                 onAck = { if (test && !live.alarming) Store.testAlarm.value = false else ack() },
                 onSilence = { Store.silenced.value = true },
                 onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") }
@@ -256,7 +256,8 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
                 if (info) InfoScreen(profile, me?.canEdit == true, onBack = { info = false },
-                    onSave = { np, done -> scope.launch { done(Store.saveProfile(ctx, np, "대상자 정보")) } })
+                    onSave = { np, done -> scope.launch { done(Store.saveProfile(ctx, np, "대상자 정보")) } },
+                    onSavePeople = { list, what, done -> scope.launch { done(Store.savePeople(ctx, list, what)) } })
                 else when (tab) {
                     0 -> HomeScreen(live, profile, recs, ackBusy, ackMsg, ack,
                         onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") },
