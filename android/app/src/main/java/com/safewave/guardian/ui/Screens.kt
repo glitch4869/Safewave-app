@@ -21,10 +21,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
@@ -231,18 +234,65 @@ fun HomeScreen(
 
 // ---------------- 전화 ----------------
 @Composable
-fun CallScreen(p: Profile, onCall: (Contact) -> Unit, on119: () -> Unit) {
+fun CallScreen(
+    p: Profile, canEdit: Boolean, onCall: (Contact) -> Unit, on119: () -> Unit,
+    onSave: (List<Contact>, (String?) -> Unit) -> Unit
+) {
+    var editing by remember { mutableStateOf(-2) }        // -2 없음, -1 새로 추가, 0.. 그 번호 수정
+    var confirmDel by remember { mutableStateOf(-1) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf("") }
+    var msgOk by remember { mutableStateOf(true) }
+    val list = p.contacts
+    fun save(newList: List<Contact>, done: String) {
+        busy = true; msg = ""
+        onSave(newList) { err ->
+            busy = false
+            if (err == null) { editing = -2; confirmDel = -1; msg = done; msgOk = true } else { msg = err; msgOk = false }
+        }
+    }
     Page {
         Title("전화하기")
-        Body("이름 옆 버튼을 누르면 전화 화면이 열려요.")
-        if (p.contacts.isEmpty()) Card { Body("등록된 연락처가 없어요. 관리자가 관제 사이트에서 등록하면 여기에 나와요.") }
-        p.contacts.forEachIndexed { i, c ->
-            Card {
+        Body(if (canEdit) "이름 옆 버튼으로 전화를 걸거나, 연락처를 고칠 수 있어요." else "버튼을 누르면 전화 화면이 열려요.")
+        if (msg.isNotEmpty()) Body(msg, color = if (msgOk) C.ok else C.crit)
+        if (list.isEmpty() && editing != -1) Card {
+            Body(if (canEdit) "등록된 연락처가 없어요. 아래 '연락처 추가'를 눌러 주세요."
+                 else "등록된 연락처가 없어요. 관리자가 등록하면 여기에 나와요.")
+        }
+        list.forEachIndexed { i, c ->
+            if (editing == i) {
+                ContactForm("${i + 1}순위 연락처 고치기", c, busy,
+                    onSave = { nc -> save(list.toMutableList().also { it[i] = nc }, "연락처를 고쳤어요. 관제 사이트에도 반영돼요.") },
+                    onCancel = { editing = -2 })
+            } else Card {
                 Text("${i + 1}순위 · ${c.rel.ifEmpty { "연락처" }}", fontSize = 18.sp, color = C.sub, fontWeight = FontWeight.SemiBold)
                 Text(c.name.ifEmpty { "이름 없음" }, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
-                Text(c.phone, fontSize = 24.sp, color = C.ink)
+                Text(c.phone.ifEmpty { "전화번호 없음" }, fontSize = 24.sp, color = C.ink)
                 BigButton("전화 걸기", { onCall(c) }, color = C.ok, icon = Icons.Default.Phone, enabled = c.phone.isNotBlank())
+                if (canEdit) {
+                    if (confirmDel == i) {
+                        Body("${c.name.ifEmpty { "이 연락처" }}를 지울까요?", color = C.crit, size = 21)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            BigButton(if (busy) "지우는 중..." else "지우기", { save(list.filterIndexed { j, _ -> j != i }, "연락처를 지웠어요.") },
+                                Modifier.weight(1f), color = C.crit, enabled = !busy)
+                            BigButton("아니요", { confirmDel = -1 }, Modifier.weight(1f), outlined = true, contentColor = C.ink)
+                        }
+                    } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        BigButton("고치기", { editing = i; confirmDel = -1; msg = "" }, Modifier.weight(1f), outlined = true,
+                            contentColor = C.brand, icon = Icons.Default.Edit)
+                        BigButton("지우기", { confirmDel = i; editing = -2; msg = "" }, Modifier.weight(1f), outlined = true,
+                            contentColor = C.crit, icon = Icons.Default.Delete)
+                    }
+                }
             }
+        }
+        if (canEdit) {
+            if (editing == -1) ContactForm("새 연락처", Contact("", "", ""), busy,
+                onSave = { nc -> save(list + nc, "연락처를 추가했어요. 관제 사이트에도 반영돼요.") },
+                onCancel = { editing = -2 })
+            else if (list.size < MAX_CONTACTS) BigButton("연락처 추가", { editing = -1; confirmDel = -1; msg = "" },
+                color = C.brand, icon = Icons.Default.Add)
+            else Body("연락처는 ${MAX_CONTACTS}명까지 등록할 수 있어요.", size = 18)
         }
         Card {
             Text("응급 신고", fontSize = 18.sp, color = C.sub, fontWeight = FontWeight.SemiBold)
@@ -250,6 +300,40 @@ fun CallScreen(p: Profile, onCall: (Contact) -> Unit, on119: () -> Unit) {
             BigButton("119 전화", on119, color = C.crit, icon = Icons.Default.Call)
         }
     }
+}
+
+const val MAX_CONTACTS = 4   // 관제 사이트와 같게
+
+@Composable
+private fun ContactForm(title: String, init: Contact, busy: Boolean, onSave: (Contact) -> Unit, onCancel: () -> Unit) {
+    var name by remember { mutableStateOf(init.name) }
+    var rel by remember { mutableStateOf(init.rel) }
+    var phone by remember { mutableStateOf(init.phone) }
+    Card {
+        Text(title, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = C.ink)
+        BigField("이름", name) { name = it }
+        BigField("관계 (예: 아들, 딸, 복지관)", rel) { rel = it }
+        BigField("전화번호", phone, KeyboardType.Phone) { phone = it }
+        BigButton(if (busy) "저장하는 중..." else "저장", {
+            onSave(Contact(name.trim(), rel.trim(), phone.trim()))
+        }, color = C.ok, icon = Icons.Default.Check, enabled = !busy && name.isNotBlank() && phone.any { it.isDigit() })
+        BigButton("취소", onCancel, outlined = true, contentColor = C.sub, enabled = !busy)
+    }
+}
+
+@Composable
+fun BigField(label: String, value: String, type: KeyboardType = KeyboardType.Text, singleLine: Boolean = true, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value, onChange, Modifier.fillMaxWidth(),
+        label = { Text(label, fontSize = 18.sp) },
+        textStyle = TextStyle(fontSize = 22.sp, color = C.ink),
+        singleLine = singleLine,
+        keyboardOptions = KeyboardOptions(keyboardType = type),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = C.brand, unfocusedBorderColor = C.sub,
+            focusedContainerColor = C.card, unfocusedContainerColor = C.card
+        )
+    )
 }
 
 // ---------------- 기록 ----------------
@@ -267,10 +351,23 @@ fun RecordsScreen(recs: List<Rec>, onRefresh: () -> Unit) {
 
 // ---------------- 어르신 정보 ----------------
 @Composable
-fun InfoScreen(p: Profile, onBack: () -> Unit) {
+fun InfoScreen(p: Profile, canEdit: Boolean, onBack: () -> Unit, onSave: (Profile, (String?) -> Unit) -> Unit) {
+    var editing by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf("") }
+    if (editing) {
+        ProfileForm(p, busy, msg,
+            onSave = { np ->
+                busy = true; msg = ""
+                onSave(np) { err -> busy = false; if (err == null) { editing = false; msg = "저장했어요. 관제 사이트에도 반영돼요." } else msg = err }
+            },
+            onCancel = { editing = false; msg = "" })
+        return
+    }
     Page {
         BigButton("돌아가기", onBack, outlined = true, contentColor = C.ink, icon = Icons.Default.ArrowBack)
         Title("어르신 정보")
+        if (msg.isNotEmpty()) Body(msg, color = C.ok)
         Card {
             Text(p.name, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
             val meta = listOf(p.age.takeIf { it.isNotEmpty() }?.let { "${it}세" }, p.sex.ifEmpty { null },
@@ -281,8 +378,50 @@ fun InfoScreen(p: Profile, onBack: () -> Unit) {
             InfoRow("주소", p.addr); InfoRow("질환", p.cond); InfoRow("복용약", p.meds)
             InfoRow("거동", p.mob); InfoRow("특이사항", p.note)
         }
+        if (canEdit) BigButton("정보 고치기", { editing = true; msg = "" }, color = C.brand, icon = Icons.Default.Edit)
+        else Body("정보는 관리자 계정에서 고칠 수 있어요.", size = 18)
         if (!p.loaded) Body("관제 사이트에 등록된 정보가 아직 없어요.")
-        Body("정보 수정은 관리자가 관제 사이트에서 할 수 있어요.", size = 18)
+    }
+}
+
+@Composable
+private fun ProfileForm(p: Profile, busy: Boolean, msg: String, onSave: (Profile) -> Unit, onCancel: () -> Unit) {
+    var name by remember { mutableStateOf(if (p.loaded) p.name else "") }
+    var age by remember { mutableStateOf(p.age) }
+    var sex by remember { mutableStateOf(p.sex.ifEmpty { "여" }) }
+    var blood by remember { mutableStateOf(p.blood) }
+    var addr by remember { mutableStateOf(p.addr) }
+    var cond by remember { mutableStateOf(p.cond) }
+    var meds by remember { mutableStateOf(p.meds) }
+    var mob by remember { mutableStateOf(p.mob) }
+    var note by remember { mutableStateOf(p.note) }
+    Page {
+        Title("어르신 정보 고치기")
+        Card {
+            BigField("이름", name) { name = it }
+            BigField("나이", age, KeyboardType.Number) { v -> age = v.filter { it.isDigit() }.take(3) }
+            Text("성별", fontSize = 18.sp, color = C.sub, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("여", "남").forEach { s ->
+                    BigButton(s, { sex = s }, Modifier.weight(1f), outlined = sex != s, contentColor = if (sex == s) Color.White else C.brand)
+                }
+            }
+            BigField("혈액형 (예: A+)", blood) { blood = it.take(6) }
+        }
+        Card {
+            BigField("주소", addr, singleLine = false) { addr = it }
+            BigField("질환", cond, singleLine = false) { cond = it }
+            BigField("복용약", meds, singleLine = false) { meds = it }
+            BigField("거동 (예: 보행 보조기 사용)", mob, singleLine = false) { mob = it }
+            BigField("특이사항", note, singleLine = false) { note = it }
+        }
+        if (msg.isNotEmpty()) Body(msg, color = C.crit)
+        BigButton(if (busy) "저장하는 중..." else "저장", {
+            onSave(p.copy(name = name.trim(), age = age.trim(), sex = sex, blood = blood.trim(), addr = addr.trim(),
+                cond = cond.trim(), meds = meds.trim(), mob = mob.trim(), note = note.trim()))
+        }, color = C.ok, icon = Icons.Default.Check, enabled = !busy && name.isNotBlank())
+        BigButton("취소", onCancel, outlined = true, contentColor = C.sub, enabled = !busy)
+        Body("저장하면 관제 사이트와 다른 보호자 앱에도 바뀐 정보가 보여요.", size = 17)
     }
 }
 

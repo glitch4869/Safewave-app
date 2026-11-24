@@ -33,6 +33,8 @@ data class Profile(
 )
 
 data class Me(val name: String, val email: String, val role: String) {
+    /** 관제 사이트와 같이 관리자만 어르신 정보·연락처를 고칠 수 있음 */
+    val canEdit get() = role == "admin"
     val roleText get() = when (role) { "admin" -> "관리자"; "member" -> "보호자"; "pending" -> "승인 대기"; else -> role }
 }
 
@@ -206,6 +208,35 @@ object Store {
             addr = s("addr"), cond = s("cond"), meds = s("meds"), mob = s("mob"), note = s("note"),
             contacts = cs, loaded = true
         )
+    }
+
+    /**
+     * 어르신 정보·연락처 저장. 사이트와 같은 shared/<노드>/profile 에 저장해서 사이트 화면에도 바로 반영됨.
+     * 성공하면 null, 실패하면 안내 문구
+     */
+    suspend fun saveProfile(ctx: Context, np: Profile, what: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val nodeId = Prefs(ctx).node
+            val contacts = JSONArray()
+            np.contacts.forEach { contacts.put(JSONObject().put("name", it.name).put("rel", it.rel).put("phone", it.phone)) }
+            val pj = JSONObject()
+                .put("name", np.name).put("age", np.age.trim().toIntOrNull() ?: np.age.trim())
+                .put("sex", np.sex).put("blood", np.blood).put("addr", np.addr).put("cond", np.cond)
+                .put("meds", np.meds).put("mob", np.mob).put("note", np.note).put("contacts", contacts)
+            val who = me.value?.name.orEmpty()
+            val whoJson: Any = if (who.isEmpty()) JSONObject.NULL else who
+            val body = JSONObject().put("profile", pj).put("by", whoJson).put("at", JSONObject().put(".sv", "timestamp"))
+            Db.patch(ctx, "/shared/$nodeId", body.toString())
+            profile.value = np.copy(loaded = true)
+            val log = JSONObject().put("msg", "$what 저장 (앱)" + if (who.isNotEmpty()) " · $who" else "")
+                .put("cls", "sys").put("by", whoJson).put("ts", JSONObject().put(".sv", "timestamp"))
+            runCatching { Db.post(ctx, "/logs/$nodeId", log.toString()) }
+            null
+        } catch (e: AuthException) {
+            "수정할 권한이 없어요. 관리자 계정으로 로그인해 주세요."
+        } catch (e: Exception) {
+            "저장하지 못했어요. 인터넷을 확인하고 다시 해 주세요."
+        }
     }
 
     // ---------------- 기록 (레이더 이벤트 + 사이트 공유 기록) ----------------

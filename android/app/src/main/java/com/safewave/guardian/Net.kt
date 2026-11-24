@@ -52,10 +52,14 @@ class Prefs(ctx: Context) {
 object Http {
     data class Res(val code: Int, val body: String)
 
-    fun call(method: String, url: String, body: String? = null, contentType: String = "application/json"): Res {
+    fun call(
+        method: String, url: String, body: String? = null, contentType: String = "application/json",
+        headers: Map<String, String> = emptyMap()
+    ): Res {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
             c.requestMethod = method
+            headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
             c.connectTimeout = 15_000
             c.readTimeout = 20_000
             if (body != null) {
@@ -181,4 +185,7 @@ object Db {
     fun get(ctx: Context, path: String, query: String = ""): String = check(Http.call("GET", url(ctx, path, query)))
     fun put(ctx: Context, path: String, json: String): String = check(Http.call("PUT", url(ctx, path), json))
     fun post(ctx: Context, path: String, json: String): String = check(Http.call("POST", url(ctx, path), json))
+    /** 일부만 고치기 (사이트의 shareSave 와 같은 PATCH) */
+    fun patch(ctx: Context, path: String, json: String): String =
+        check(Http.call("POST", url(ctx, path), json, headers = mapOf("X-HTTP-Method-Override" to "PATCH")))
 }

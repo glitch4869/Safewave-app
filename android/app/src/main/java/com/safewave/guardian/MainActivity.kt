@@ -226,6 +226,7 @@ class MainActivity : ComponentActivity() {
 
         // 화면이 켜져 있는 동안 기록은 15초마다
         LaunchedEffect(Unit) { while (true) { Store.refreshRecords(ctx); delay(15_000) } }
+        LaunchedEffect(Unit) { while (true) { delay(30_000); Store.refreshShared(ctx) } }
         LaunchedEffect(live.status) { if (live.status != Status.EMERGENCY && live.status != Status.GRACE) ackMsg = "" }
 
         val ack: () -> Unit = {
@@ -254,12 +255,14 @@ class MainActivity : ComponentActivity() {
 
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
-                if (info) InfoScreen(profile) { info = false }
+                if (info) InfoScreen(profile, me?.canEdit == true, onBack = { info = false },
+                    onSave = { np, done -> scope.launch { done(Store.saveProfile(ctx, np, "대상자 정보")) } })
                 else when (tab) {
                     0 -> HomeScreen(live, profile, recs, ackBusy, ackMsg, ack,
                         onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") },
                         onInfo = { info = true }, onRecords = { tab = 2 })
-                    1 -> CallScreen(profile, onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") })
+                    1 -> CallScreen(profile, me?.canEdit == true, onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") },
+                        onSave = { list, done -> scope.launch { done(Store.saveProfile(ctx, profile.copy(contacts = list), "비상연락처")) } })
                     2 -> RecordsScreen(recs) { scope.launch { Store.refreshRecords(ctx) } }
                     else -> SettingsScreen(
                         me, font, voice, sound, Prefs(ctx).node,
