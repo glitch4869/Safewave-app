@@ -143,8 +143,8 @@ fun LoginScreen(busy: Boolean, error: String, onLogin: (String, String) -> Unit,
     var show by remember { mutableStateOf(false) }
     Page {
         Spacer(Modifier.height(12.dp))
-        Box(Modifier.size(84.dp).clip(RoundedCornerShape(24.dp)).background(C.brand), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Notifications, null, tint = Color.White, modifier = Modifier.size(48.dp))
+        Box(Modifier.size(84.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xFF16A34A)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Home, null, tint = Color.White, modifier = Modifier.size(52.dp))
         }
         Text("SafeWave 보호자", fontSize = 34.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
         Body("관제 사이트와 같은 계정으로 들어가세요.")
