@@ -217,9 +217,11 @@ fun StatusCard(l: Live, name: String, onAck: () -> Unit, ackBusy: Boolean) {
 @Composable
 fun HomeScreen(
     l: Live, p: Profile, recs: List<Rec>, ackBusy: Boolean, ackMsg: String,
-    onAck: () -> Unit, onCall: (Contact) -> Unit, on119: () -> Unit, onInfo: () -> Unit, onRecords: () -> Unit
+    onAck: () -> Unit, onCall: (Contact) -> Unit, on119: () -> Unit, onInfo: () -> Unit, onRecords: () -> Unit,
+    newNotice: com.safewave.guardian.Notice? = null, onNotice: () -> Unit = {}
 ) {
     Page {
+        if (newNotice != null) NewNoticeBanner(newNotice, onNotice)
         Text("${p.displayName} 님", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = C.ink)
         StatusCard(l, p.displayName, onAck, ackBusy)
         if (ackMsg.isNotEmpty()) Body(ackMsg, color = if (ackMsg.startsWith("확인")) C.ok else C.crit)
@@ -544,7 +546,7 @@ private fun InfoRow(label: String, value: String) {
 // ---------------- 설정 ----------------
 @Composable
 fun SettingsScreen(
-    me: Me?, fontLevel: Int, voice: Boolean, sound: Boolean, node: String,
+    me: Me?, fontLevel: Int, voice: Boolean, sound: Boolean, node: String, flipGuide: Boolean, onFlipGuide: (Boolean) -> Unit,
     needNotify: Boolean, needFullScreen: Boolean, needBattery: Boolean,
     onFont: (Int) -> Unit, onVoice: (Boolean) -> Unit, onSound: (Boolean) -> Unit,
     onTest: () -> Unit, onNotify: () -> Unit, onFullScreen: () -> Unit, onBattery: () -> Unit, onLogout: () -> Unit
@@ -572,12 +574,14 @@ fun SettingsScreen(
             BigButton("경보 시험하기", onTest, outlined = true, contentColor = C.crit, icon = Icons.Default.Notifications)
             Body("시험 경보는 이 휴대폰에서만 울리고, 다른 사람에게는 가지 않아요.", size = 17)
         }
-        Card {
+        if (flipGuide) Card {
             Text("갤럭시 플립 커버 화면", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = C.ink)
             Body("접은 채로도 상태를 보고 경보를 받으려면 커버 화면에 SafeWave 위젯을 놓아 주세요.", size = 18)
             Body("1. 설정 → 커버 화면 → 위젯\n2. SafeWave 상태 위젯 켜기\n3. 설정 → 커버 화면 → 알림 표시 켜기", color = C.ink, size = 19)
             Body("긴급이면 위젯이 빨갛게 바뀌고, 누르면 커버 화면에서 바로 확인할 수 있어요.", size = 17)
-        }
+            BigButton("이 안내 숨기기", { onFlipGuide(false) }, outlined = true, contentColor = C.sub)
+        } else BigButton("갤럭시 플립 커버 화면 안내 보기", { onFlipGuide(true) }, outlined = true, contentColor = C.brand,
+            icon = Icons.Default.Info)
         Card {
             Text("내 계정", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = C.ink)
             if (me != null) { Body("${me.name} (${me.roleText})", color = C.ink, size = 22); Body(me.email, size = 18) }

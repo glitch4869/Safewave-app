@@ -42,6 +42,8 @@ class WatchService : Service() {
         const val CH_WATCH = "watch"
         const val CH_ALARM = "alarm_v2"
         const val CH_GRACE = "grace"
+        const val CH_NOTICE = "notice"
+        const val N_NOTICE = 3
         const val N_WATCH = 1
         const val N_ALERT = 2
         const val ACTION_ACK = "com.safewave.guardian.ACK"
@@ -65,6 +67,9 @@ class WatchService : Service() {
                 description = "넘어진 것 같을 때 미리 알려 드립니다"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 400, 200, 400)
+            })
+            nm.createNotificationChannel(NotificationChannel(CH_NOTICE, "공지사항", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "관리자가 새 공지사항을 올리면 알려 드립니다"
             })
             runCatching { nm.deleteNotificationChannel("alarm") }   // 예전 무음 채널 정리
             nm.createNotificationChannel(NotificationChannel(CH_ALARM, "긴급 낙상 경보", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -117,7 +122,7 @@ class WatchService : Service() {
         // 2초마다 연결 끊김 여부 다시 계산
         scope.launch { while (isActive) { Store.recompute(); delay(2_000) } }
         // 대상자 정보는 5분마다
-        scope.launch { while (isActive) { Store.refreshShared(this@WatchService); delay(5 * 60_000L) } }
+        scope.launch { while (isActive) { Store.refreshShared(this@WatchService); checkNotice(); delay(5 * 60_000L) } }
         // 50분마다 새 토큰으로 다시 연결 (토큰은 1시간짜리)
         scope.launch { while (isActive) { delay(50 * 60_000L); stream?.reconnect() } }
         // 1분마다 권한 확인 (관리자가 이용 중지하면 멈춤)
@@ -193,6 +198,29 @@ class WatchService : Service() {
         }
         if (silenced) stopAlarm()
         StatusWidget.update(this)
+    }
+
+    /** 새 공지가 올라오면 알림 (처음 실행 때는 기존 공지로 알리지 않음) */
+    private fun checkNotice() {
+        val newest = Store.notices.value.maxByOrNull { it.ts } ?: return
+        val p = Prefs(this)
+        if (p.noticeNotified == 0L) { p.noticeNotified = newest.ts; return }
+        if (newest.ts <= p.noticeNotified) return
+        p.noticeNotified = newest.ts
+        val open = PendingIntent.getActivity(
+            this, 4, Intent(this, MainActivity::class.java).putExtra("open", "notice")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val n = NotificationCompat.Builder(this, CH_NOTICE)
+            .setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle("새 공지사항")
+            .setContentText(newest.title)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(newest.title + "\n" + newest.body.take(200)))
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(N_NOTICE, n)
     }
 
     /** 접혀 있으면 커버 화면에 경보 화면을 바로 띄워 봄 (기기에 따라 막힐 수 있어 알림이 기본) */

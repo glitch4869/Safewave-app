@@ -51,6 +51,9 @@ data class Me(val name: String, val email: String, val role: String) {
     val roleText get() = when (role) { "admin" -> "관리자"; "member" -> "보호자"; "pending" -> "승인 대기"; else -> role }
 }
 
+/** 공지사항 (shared/<노드>/notices/<id>) */
+data class Notice(val id: String, val title: String, val body: String, val by: String, val ts: Long, val pinned: Boolean)
+
 /** kind: ok(초록) wn(주황) cr(빨강) sys(회색) */
 data class Rec(val id: String, val ts: Long, val msg: String, val kind: String)
 
@@ -64,6 +67,7 @@ object Store {
     val fontLevel = MutableStateFlow(1)
     val testAlarm = MutableStateFlow(false)
     val silenced = MutableStateFlow(false)
+    val notices = MutableStateFlow<List<Notice>>(emptyList())
 
     @Volatile private var ackUntil = 0L
     private var node: JSONObject? = null
@@ -202,9 +206,48 @@ object Store {
             val body = Db.get(ctx, "/shared/${Prefs(ctx).node}")
             if (body.trim() == "null") return@runCatching
             val doc = JSONObject(body)
+            notices.value = parseNotices(doc.optJSONObject("notices"))
             val people = parsePeople(doc.opt("people"))
             val pj = doc.optJSONObject("profile")
             profile.value = (if (pj != null) parseProfile(pj) else profile.value).copy(people = people)
+        }
+    }
+
+    private fun parseNotices(j: JSONObject?): List<Notice> {
+        if (j == null) return emptyList()
+        return j.keys().asSequence().mapNotNull { k ->
+            val o = j.optJSONObject(k) ?: return@mapNotNull null
+            val title = o.optString("title").trim()
+            if (title.isEmpty()) null
+            else Notice(k, title, o.optString("body").trim(), o.optString("by").takeIf { it != "null" }.orEmpty(),
+                o.optLong("ts", 0L), o.optBoolean("pinned", false))
+        }.sortedWith(compareByDescending<Notice> { it.pinned }.thenByDescending { it.ts }).toList()
+    }
+
+    /** 공지 쓰기·고치기 (id 가 없으면 새 글). 성공하면 null */
+    suspend fun saveNotice(ctx: Context, old: Notice?, title: String, text: String, pinned: Boolean): String? =
+        writeNotice(ctx, old?.id ?: "n${System.currentTimeMillis()}",
+            JSONObject().put("title", title).put("body", text).put("pinned", pinned)
+                .put("by", me.value?.name?.takeIf { it.isNotEmpty() } ?: JSONObject.NULL)
+                .put("ts", if (old != null && old.ts > 0) old.ts else JSONObject().put(".sv", "timestamp")),
+            if (old == null) "공지사항 등록: $title" else "공지사항 수정: $title")
+
+    suspend fun deleteNotice(ctx: Context, n: Notice): String? = writeNotice(ctx, n.id, JSONObject.NULL, "공지사항 삭제: ${n.title}")
+
+    private suspend fun writeNotice(ctx: Context, id: String, value: Any, what: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val nodeId = Prefs(ctx).node
+            Db.patch(ctx, "/shared/$nodeId", JSONObject().put("notices/$id", value).toString())
+            val who = me.value?.name.orEmpty()
+            val log = JSONObject().put("msg", "$what (앱)" + if (who.isNotEmpty()) " · $who" else "")
+                .put("cls", "sys").put("by", if (who.isEmpty()) JSONObject.NULL else who).put("ts", JSONObject().put(".sv", "timestamp"))
+            runCatching { Db.post(ctx, "/logs/$nodeId", log.toString()) }
+            refreshShared(ctx)
+            null
+        } catch (e: AuthException) {
+            "공지를 쓸 권한이 없어요. 관리자 계정으로 로그인해 주세요."
+        } catch (e: Exception) {
+            "저장하지 못했어요. 인터넷을 확인하고 다시 해 주세요."
         }
     }
 

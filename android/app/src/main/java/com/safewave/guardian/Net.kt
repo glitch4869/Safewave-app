@@ -44,6 +44,18 @@ class Prefs(ctx: Context) {
         get() = p.getBoolean("sound", true)
         set(v) { p.edit().putBoolean("sound", v).apply() }
 
+    /** 설정 탭의 갤럭시 플립 커버 화면 안내 보이기 */
+    var flipGuide: Boolean
+        get() = p.getBoolean("flipGuide", true)
+        set(v) { p.edit().putBoolean("flipGuide", v).apply() }
+    /** 마지막으로 읽은 공지 시각 / 알림 보낸 공지 시각 */
+    var noticeRead: Long
+        get() = p.getLong("noticeRead", 0L)
+        set(v) { p.edit().putLong("noticeRead", v).apply() }
+    var noticeNotified: Long
+        get() = p.getLong("noticeNotified", 0L)
+        set(v) { p.edit().putLong("noticeNotified", v).apply() }
+
     fun clearSession() {
         p.edit().remove("uid").remove("email").remove("rt").remove("name").apply()
     }

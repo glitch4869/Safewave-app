@@ -25,6 +25,9 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,6 +59,7 @@ import com.safewave.guardian.ui.EmergencyScreen
 import com.safewave.guardian.ui.HomeScreen
 import com.safewave.guardian.ui.InfoScreen
 import com.safewave.guardian.ui.LoginScreen
+import com.safewave.guardian.ui.NoticeScreen
 import com.safewave.guardian.ui.RecordsScreen
 import com.safewave.guardian.ui.SafeTheme
 import com.safewave.guardian.ui.SettingsScreen
@@ -64,6 +68,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+const val TAB_NOTICE = 3
 
 fun Context.dial(number: String) {
     val n = number.filter { it.isDigit() || it == '+' }
@@ -74,6 +80,7 @@ fun Context.dial(number: String) {
 class MainActivity : ComponentActivity() {
 
     private val needNotify = mutableStateOf(false)
+    private val openTab = mutableIntStateOf(-1)
     private val needFullScreen = mutableStateOf(false)
     private val needBattery = mutableStateOf(false)
 
@@ -83,11 +90,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         WatchService.channels(this)
         Store.fontLevel.value = Prefs(this).fontLevel
+        handleOpen(intent)
         setContent {
             val font by Store.fontLevel.collectAsState()
             SafeTheme(font) { App() }
         }
         lifecycleScope.launch { if (Store.loadMe(this@MainActivity) == Gate.READY) onReady() }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleOpen(intent)
+    }
+
+    private fun handleOpen(i: Intent?) {
+        if (i?.getStringExtra("open") == "notice") openTab.intValue = TAB_NOTICE
     }
 
     override fun onResume() {
@@ -223,6 +240,12 @@ class MainActivity : ComponentActivity() {
         var ackMsg by remember { mutableStateOf("") }
         var voice by remember { mutableStateOf(Prefs(ctx).voice) }
         var sound by remember { mutableStateOf(Prefs(ctx).alarmSound) }
+        var flipGuide by remember { mutableStateOf(Prefs(ctx).flipGuide) }
+        val notices by Store.notices.collectAsState()
+        var noticeRead by remember { mutableStateOf(Prefs(ctx).noticeRead) }
+        val newest = notices.maxByOrNull { it.ts }
+        val unread = newest != null && newest.ts > noticeRead
+        LaunchedEffect(openTab.intValue) { if (openTab.intValue >= 0) { info = false; tab = openTab.intValue; openTab.intValue = -1 } }
 
         // 화면이 켜져 있는 동안 기록은 15초마다
         LaunchedEffect(Unit) { while (true) { Store.refreshRecords(ctx); delay(15_000) } }
@@ -261,12 +284,21 @@ class MainActivity : ComponentActivity() {
                 else when (tab) {
                     0 -> HomeScreen(live, profile, recs, ackBusy, ackMsg, ack,
                         onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") },
-                        onInfo = { info = true }, onRecords = { tab = 2 })
+                        onInfo = { info = true }, onRecords = { tab = 2 },
+                        newNotice = if (unread) newest else null, onNotice = { tab = TAB_NOTICE })
                     1 -> CallScreen(profile, me?.canEdit == true, onCall = { ctx.dial(it.phone) }, on119 = { ctx.dial("119") },
                         onSave = { list, done -> scope.launch { done(Store.saveProfile(ctx, profile.copy(contacts = list), "비상연락처")) } })
                     2 -> RecordsScreen(recs) { scope.launch { Store.refreshRecords(ctx) } }
+                    TAB_NOTICE -> NoticeScreen(
+                        notices, me?.canEdit == true, noticeRead,
+                        onRead = { noticeRead = it; Prefs(ctx).noticeRead = it },
+                        onRefresh = { scope.launch { Store.refreshShared(ctx) } },
+                        onSave = { old, t, b, pin, done -> scope.launch { done(Store.saveNotice(ctx, old, t, b, pin)) } },
+                        onDelete = { n, done -> scope.launch { done(Store.deleteNotice(ctx, n)) } }
+                    )
                     else -> SettingsScreen(
                         me, font, voice, sound, Prefs(ctx).node,
+                        flipGuide, { flipGuide = it; Prefs(ctx).flipGuide = it },
                         needNotify.value, needFullScreen.value, needBattery.value,
                         onFont = { Prefs(ctx).fontLevel = it; Store.fontLevel.value = it },
                         onVoice = { voice = it; Prefs(ctx).voice = it },
@@ -279,12 +311,16 @@ class MainActivity : ComponentActivity() {
             }
             NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
                 val items = listOf("홈" to Icons.Default.Home, "전화" to Icons.Default.Phone,
-                    "기록" to Icons.Default.List, "설정" to Icons.Default.Settings)
+                    "기록" to Icons.Default.List, "공지" to Icons.Default.Notifications, "설정" to Icons.Default.Settings)
                 items.forEachIndexed { i, (label, icon) ->
                     NavigationBarItem(
                         selected = tab == i && !info,
                         onClick = { info = false; tab = i },
-                        icon = { Icon(icon, contentDescription = label, modifier = Modifier.size(32.dp)) },
+                        icon = {
+                            if (i == TAB_NOTICE && unread) BadgedBox(badge = { Badge(containerColor = C.crit) }) {
+                                Icon(icon, contentDescription = "$label (새 글)", modifier = Modifier.size(32.dp))
+                            } else Icon(icon, contentDescription = label, modifier = Modifier.size(32.dp))
+                        },
                         label = { Text(label, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = C.brand, selectedTextColor = C.brand,
