@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
 
     private fun onReady() {
         WatchService.start(this)
+        StatusWidget.update(this, force = true)
         checkPerms()
         if (needNotify.value && Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
         lifecycleScope.launch { Store.refreshShared(this@MainActivity); Store.refreshRecords(this@MainActivity) }
@@ -145,6 +146,7 @@ class MainActivity : ComponentActivity() {
         Auth.signOut(this)
         Store.reset()
         Store.gate.value = Gate.LOGGED_OUT
+        StatusWidget.update(this, force = true)
     }
 
     @Composable

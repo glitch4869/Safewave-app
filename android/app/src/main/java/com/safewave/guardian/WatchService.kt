@@ -40,7 +40,7 @@ class WatchService : Service() {
 
     companion object {
         const val CH_WATCH = "watch"
-        const val CH_ALARM = "alarm"
+        const val CH_ALARM = "alarm_v2"
         const val CH_GRACE = "grace"
         const val N_WATCH = 1
         const val N_ALERT = 2
@@ -66,10 +66,19 @@ class WatchService : Service() {
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 400, 200, 400)
             })
+            runCatching { nm.deleteNotificationChannel("alarm") }   // 예전 무음 채널 정리
             nm.createNotificationChannel(NotificationChannel(CH_ALARM, "긴급 낙상 경보", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "넘어지고 반응이 없을 때 울리는 경보입니다"
-                setSound(null, null)            // 경보음은 서비스가 알람 볼륨으로 직접 울림
-                enableVibration(false)          // 진동도 서비스가 직접
+                // 소리·진동이 있어야 갤럭시 플립 커버 화면과 잠금 화면이 켜짐
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+                )
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 900, 500, 900, 500, 900)
+                enableLights(true)
+                lightColor = Color.RED
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setBypassDnd(true)
             })
@@ -162,7 +171,8 @@ class WatchService : Service() {
                     val words = if (test) "시험 경보입니다. 실제 상황이 아닙니다."
                                 else "긴급 상황입니다. ${name()} 님이 넘어지셨습니다. 확인해 주세요."
                     speak(words)
-                    startAlarm(if (Prefs(this).voice) 4_500L else 0L)
+                    startAlarm(if (Prefs(this).voice) 6_000L else 3_000L)
+                    openOnCoverIfFolded()
                     if (test) scope.launch { delay(20_000); Store.testAlarm.value = false }
                 }
                 "grace" -> {
@@ -180,6 +190,15 @@ class WatchService : Service() {
             nm.notify(N_ALERT, graceNotification(l))   // 남은 시간 갱신
         }
         if (silenced) stopAlarm()
+        StatusWidget.update(this)
+    }
+
+    /** 접혀 있으면 커버 화면에 경보 화면을 바로 띄워 봄 (기기에 따라 막힐 수 있어 알림이 기본) */
+    private fun openOnCoverIfFolded() {
+        val opts = Cover.launchOptions(this) ?: return
+        runCatching {
+            startActivity(Intent(this, AlarmActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), opts)
+        }
     }
 
     private fun watchText(l: Live): String = when {
@@ -224,7 +243,7 @@ class WatchService : Service() {
     private fun alarmNotification(test: Boolean): Notification {
         val full = PendingIntent.getActivity(
             this, 1, Intent(this, AlarmActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT, Cover.launchOptions(this)
         )
         val ack = PendingIntent.getService(
             this, 2, Intent(this, WatchService::class.java).setAction(ACTION_ACK),
@@ -242,7 +261,9 @@ class WatchService : Service() {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(false)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setFullScreenIntent(full, true)
             .setContentIntent(full)
             .addAction(0, "확인했어요", ack)

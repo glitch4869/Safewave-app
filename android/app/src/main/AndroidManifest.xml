@@ -61,6 +61,22 @@
                 android:value="Fall detection alarm: keeps a live connection to the home radar sensor so caregivers are alerted immediately when an elderly person falls." />
         </service>
 
+        <!-- 커버 화면(플렉스 윈도우)·홈 화면 위젯 -->
+        <receiver
+            android:name=".StatusWidgetProvider"
+            android:exported="false"
+            android:label="SafeWave 상태">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_info" />
+            <meta-data
+                android:name="com.samsung.android.appwidget.provider"
+                android:resource="@xml/samsung_widget" />
+        </receiver>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
